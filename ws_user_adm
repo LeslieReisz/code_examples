@@ -1,0 +1,168 @@
+##########################################################################
+#++  Script ws_user_adm.sh to create an account.
+#
+#  To run:
+# ws_user_adm.sh <user name> <description> <UID> <encrypted pwd> <primary group> <more groups>
+#  example: 
+#	ws_user_adm.sh wwilli01 "Bill Williamson" 11001 'QoQXTMdXUBD92' staff adm,rootprvl
+#  NOTES:
+#	The encrypted passsword will be different for AIX & Linux.
+#	Single quotes should be used around the password due to special characters.
+#	Primary group must be the name, not the GID.
+#	Home dir will be /home/<user name>
+#	Shell defaults:  /usr/bin/ksh for AIX; /bin/bash for Linux.
+#
+# Author: Les Reisz
+# Updates
+# 2014-04  LHR   Initial version 
+#   
+#  
+##########################################################################
+#  Subroutine section
+##########################################################################
+sub_usage ()  {
+	echo ""
+	echo "Usage:"
+	echo "ws_user_adm.sh <user name> \"<description>\" <UID> '<encrypted pwd>' \
+<primary group> <other groups comma separated>"
+	echo ""
+	exit 1
+}
+
+##########################################################################
+#  subroutine to check for a group's existence
+#   input:  group name
+#  output:  return 1 if group name exists, 0 if it does not
+##########################################################################
+sub_check_for_group () {
+
+grep -q "^${1}:" /etc/group
+if [ $? != 0 ] ; then
+	return 0
+else
+	return 1
+fi
+
+}
+##########################################################################
+#  Main
+##########################################################################
+_os_=`uname -s`
+_uname_=$1
+_desc_=$2
+_UID_=$3
+_pwd_=$4
+_grp_=$5
+_grps_to_add_=$6
+
+#####
+#  Verify input...
+#####
+#  User name
+#####
+if [ "$_uname_" = "" ] ; then
+	echo "ERROR: no user name given."
+	sub_usage
+fi
+grep -q "^${_uname_}:" /etc/passwd
+if [ $? = 0 ] ; then
+	echo "ERROR: user \"$_uname_\" already exists."
+	sub_usage
+fi
+
+#####
+#  description
+#####
+if [ "$_desc_" = "" ] ; then
+	echo "ERROR: no description given."
+	sub_usage
+fi
+
+#####
+#  UID
+#####
+if [ "$_UID_" = "" ] ; then
+	echo "ERROR: no UID given."
+	sub_usage
+fi
+echo $_UID_ | egrep -q "^[0-9]+$"
+if [ $? != 0 ] ; then
+	echo "ERROR: UID \"$_UID_\" is not a number."
+	sub_usage
+fi
+grep -q ":${_UID_}:" /etc/passwd
+if [ $? = 0 ] ; then
+	echo "ERROR: UID \"$_UID_\" already exists."
+	sub_usage
+fi
+
+#####
+#  encrypted password
+#####
+if [ "$_pwd_" = "" ] ; then
+	echo "ERROR: no encrypted password given."
+	sub_usage
+fi
+
+#####
+#  group
+#####
+if [ "$_grp_" = "" ] ; then
+	echo "ERROR: no group given."
+	sub_usage
+fi
+if sub_check_for_group $_grp_ ; then
+	echo "ERROR: group \"$_grp_\" does not exist."
+	sub_usage
+fi
+
+#####
+#  more groups
+#####
+if [ "$_grps_to_add_" != "" ] ; then
+	for i in `echo $_grps_to_add_ | sed -e 's/\,/ /g'` ; do
+		if sub_check_for_group $i ; then
+			echo "ERROR: group \"$i\" does not exist."
+			sub_usage
+		fi
+	done
+fi
+_more_groups_="-G $_grps_to_add_"
+
+
+
+
+#####
+#  Now for the meat of this script: create the account
+#####
+#  Let's do Linux first...
+#####
+if [ "$_os_" = "Linux" ] ; then
+	_cmd_="useradd -c '$_desc_' -d /home/$_uname_ -g $_grp_ $_more_groups_ -m -p '$_pwd_' -s /bin/bash -u $_UID_ $_uname_"
+	eval $_cmd_
+	if [ $? != 0 ] ; then
+		echo "ERROR: $_cmd_ failed"
+		exit 1
+	fi
+	exit 0
+fi
+
+#####
+#  Assume AIX from here on out...
+#####
+_cmd_="mkuser -a home=/home/$_uname_ gecos='$_desc_' pgrp=$_grp_ groups=$_grps_to_add_ shell=/usr/bin/ksh id=$_UID_ $_uname_"
+eval $_cmd_
+if [ $? != 0 ] ; then
+	echo  "ERROR: $_cmd_ failed!"
+	exit 1
+fi
+
+# Can use a file with many userid:passwd pairs:  cat <file> | chpasswd  -e -c
+_cmd_="echo '${_uname_}:${_pwd_}' | chpasswd  -e -c"
+eval $_cmd_
+if [ $? != 0 ] ; then
+	echo  "echo ERROR:  $_cmd_  failed!"
+	exit 1
+fi
+
+exit 0
