@@ -1,0 +1,144 @@
+#!/bin/sh
+#######################################################################
+#++ Script to scan the bus for new disks. Must be run as root.
+#
+#  Author:  Les Reisz
+#  Updates:
+#    2014/04	LHR	Initial version
+#
+#######################################################################
+#  Subroutine section.
+#######################################################################
+sub_AIX () {
+
+#####
+#  Get the current disks
+#####
+lspv | awk '{ print $1 }' | sort > $_tmp_b4_
+if [ $? != 0 ] ; then
+	echo "ERROR: could not create $_tmp_b4_"
+	sub_err_exit
+fi
+_no_of_disks_=`wc -l $_tmp_b4_ | awk '{ print $1 }'`
+echo ""
+echo "Number of disks before scan: $_no_of_disks_"
+echo ""
+
+#####
+#  Scan the bus...
+#####
+echo "Running cfgmgr to scan the bus, this may take a few minutes..."
+cfgmgr 2>/dev/null
+
+#####
+#  See what we have now & compare to before
+#####
+lspv | awk '{ print $1 }' | sort > $_tmp_after_
+if [ $? != 0 ] ; then
+	echo "ERROR: could not create $_tmp_after_"
+	sub_err_exit
+fi
+
+}
+
+#######################################################################
+sub_linux () {
+
+#####
+#  Get the current disks.  The command depends on whether multipath is present.
+#####
+if [ -f /etc/multipath.conf ] ; then
+	_disk_cmd_="fdisk -l 2>/dev/null | egrep '^Disk' | egrep -v 'dm-' | awk '{ print $2 }' | sort"
+else
+	_disk_cmd_="fdisk -l | grep ^Disk | grep '/dev' | awk '{ print $2 }' | sort"
+fi
+eval $_disk_cmd_ > $_tmp_b4_
+if [ $? != 0 ] ; then
+	echo "ERROR: $_disk_cmd_ failed."
+	sub_err_exit
+fi
+
+_no_of_disks_=`wc -l $_tmp_b4_ | awk '{ print $1 }'`
+echo ""
+echo "Number of disks before scan: $_no_of_disks_"
+echo ""
+
+#####
+#  Scan the buses.
+#  If sg3_util if it exists, scan the scsi bus with that...
+#####
+_cmd_="/usr/bin/rescan-scsi-bus.sh"
+if [ -f $_cmd_ ] ; then
+	echo "Running ${_cmd_}, this may take a few minutes..."
+	eval $_cmd_ > /dev/null 2>&1
+	if [ $? != 0 ] ; then
+		echo "ERROR: $_cmd_ failed."
+		sub_err_exit
+	fi
+else
+	echo "Scanning SCSI adapters..."
+	if [ -d /sys/class/scsi_host ] ; then
+		for i in /sys/class/scsi_host/host* ; do
+			echo '- - -' > ${i}/scan
+		done
+	fi
+fi
+#####
+#  scan FC adapters if they exist
+#####
+if [ -d /sys/class/fc_host ] ; then
+	echo "Scanning FC adapters..."
+	for i in /sys/class/fc_host/host* ; do
+		echo '- - -' > ${i}/issue_lip
+	done
+fi
+
+#####
+#  See what we have after the scan 
+#####
+eval $_disk_cmd_ > $_tmp_after_
+if [ $? != 0 ] ; then
+	echo "ERROR: could not create $_tmp_after_"
+	sub_err_exit
+fi
+
+}
+
+#######################################################################
+sub_cleanup () {
+rm -f $_tmp_b4_ $_tmp_after_ 2>/dev/null
+}
+
+#######################################################################
+sub_err_exit () {
+sub_cleanup
+exit 1
+}
+
+#######################################################################
+#  Main
+#######################################################################
+_OS_=`uname -s`
+_dts_=`date +%C%y%m%d%H%M%S`
+_script_name_=`echo ${0} | awk -F/ '{print $NF}'`
+_tmp_b4_="/tmp/${_script_name_}_b4_$_dts_"
+_tmp_after_="/tmp/${_script_name_}_after_$_dts_"
+
+case $_OS_ in
+	"AIX") sub_AIX ;;
+	"Linux") sub_linux ;;
+	*) echo "ERROR: OS \"${_os_}\" unknown."
+           exit 1 ;;
+esac
+
+_no_of_disks_=`wc -l $_tmp_after_ | awk '{ print $1 }'`
+echo ""
+echo "Number of disks after scan: $_no_of_disks_"
+
+echo ""
+echo "Checking for differences..."
+echo ""
+diff $_tmp_b4_ $_tmp_after_
+sub_cleanup
+
+exit 0
