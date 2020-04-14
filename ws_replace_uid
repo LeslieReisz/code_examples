@@ -1,0 +1,129 @@
+#!/bin/sh
+####################################################################
+#++ Script ws_replace_uid.sh to replace an account's UID.
+#  To be run manually as needed as root.
+#
+#  To run: ws_replace_uid.sh <account name> <new UID>
+#
+#  Input: <account name>  <new UID>
+# Output: /etc/passwd modified, all files and dirs owned by
+#	  the user will be changed to be owned by the new UID.
+#
+#  Author:  Les Reisz   Date: 03/2014
+#  Updates:
+#
+####################################################################
+#  Subroutine section
+####################################################################
+
+sub_usage ()  {
+	echo ""
+	echo "Usage:"
+	echo "replace_uid.sh <account name> <new UID>"
+	echo ""
+	exit 1
+}
+
+sub_ch_id_AIX () {
+	chuser id=$_new_uid_  $_uname_
+	if [ $? != 0 ] ; then
+		echo ""
+		echo "ERROR: \"chuser id=$_new_uid_  ${_uname_}\" command failed!"
+		exit 2
+	fi
+}
+
+sub_ch_id_Linux () {
+	usermod -u $_new_uid_  $_uname_
+	if [ $? != 0 ] ; then
+		echo ""
+		echo "ERROR: \"usermod -u $_new_uid_  ${_uname_}\" command failed!"
+		exit 2
+	fi
+}
+
+####################################################################
+#  Main
+####################################################################
+_file_=./passwd
+#_file_=/etc/passwd
+_uname_=$1
+_new_uid_=$2
+_os_=`uname -s`
+
+#####
+#  Check input...
+#  See if the user name exists, and while we're at it,
+#  grab the old UID.
+#####
+_old_uid_=`grep  "^${_uname_}:" $_file_ | cut -f3 -d:`
+if [ "$_old_uid_" = "" ] ; then
+	echo ""
+	echo "ERROR: user name \"$_uname_\" does not exist."
+	sub_usage
+fi
+
+#####
+#  Make sure the new UID is an integer
+#####
+echo $_new_uid_ | egrep -q "^[0-9]+$"
+if [ $? != 0 ] ; then
+	echo ""
+	echo "ERROR: UID \"$_new_uid_\" is not an integer."
+	sub_usage
+fi
+
+#####
+#  Make sure the new UID is not used.
+#####
+cat $_file_ | cut -f3 -d: | grep -q "${_new_uid_}" 
+if [ $? = 0 ] ; then
+	echo ""
+	echo "ERROR: UID \"$_new_uid_\" is in use."
+	sub_usage
+fi
+
+#####
+#  Let's make sure the old UID isn't used more than once!
+#####
+_cnt_=`cat $_file_ | cut -f3 -d: | grep "${_old_uid_}" | wc -l`
+if [ $_cnt_ != 1 ] ; then
+	echo ""
+	echo "ERROR: old UID \"$_old_uid_\" is used more than once."
+	sub_usage
+fi
+
+#####
+#  Replace the UID...
+#####
+case $_os_ in
+	"AIX") sub_ch_id_AIX ;;
+	"Linux") sub_ch_id_Linux ;;
+	*) echo "ERROR: OS \"${_os_}\" unknown."
+	   exit 1 ;;
+esac
+
+#####
+#  Now to change ownership of all the files and dirs from 
+#  the old ID to the new...
+#####
+find / -user $_old_uid_ -exec chown $_new_uid_ {} \; 2>/dev/null
+
+#  Alternate interactive....
+#ALT _files_=`find / -user $_old_uid_ 2>/dev/null`
+#ALT echo "Changing ownership of the following:"
+#ALT for i in `echo $_files_` ; do
+#ALT 	echo "$i"
+#ALT done
+#ALT echo "OK (y/n)?"
+#ALT read _resp_
+#ALT if [ "$_resp_" = "y" ] ; then
+#ALT 	echo "Off we go..."
+#ALT 	for i in `echo $_files_` ; do
+#ALT 		chown $_new_uid_ $i
+#ALT 	done
+#ALT else
+#ALT 	echo "Skipping that step then."
+#ALT fi
+
+exit 0
